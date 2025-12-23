@@ -9,6 +9,7 @@
 """Downloader modules"""
 
 import importlib
+import logging
 import subprocess
 
 
