@@ -398,6 +398,10 @@ class DownloadJob(Job):
             filepath = pathfmt.path
             filename = pathfmt.filename
 
+        # Log download start in parallel mode
+        if self._max_downloads and self._max_downloads > 1:
+            self.log.debug("Downloading: %s", filename)
+
         # Sleep outside the lock
         if self.sleep is not None:
             self.extractor.sleep(self.sleep(), "download")
@@ -465,19 +469,37 @@ class DownloadJob(Job):
         self._download_queue = []
         max_workers = self._max_downloads if self._max_downloads else 1
 
+        # Log parallel download start
+        self.log.info(
+            "Starting parallel downloads: %d files with %d workers",
+            len(queue), max_workers
+        )
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all downloads
-            futures = []
+            futures = {}
             for url, kwdict in queue:
                 future = executor.submit(self._download_single, url, kwdict)
-                futures.append(future)
+                futures[future] = kwdict.get('filename', url)
 
-            # Wait for all downloads to complete
+            # Wait for all downloads to complete with progress
+            completed = 0
+            total = len(futures)
             for future in as_completed(futures):
+                completed += 1
                 try:
                     future.result()
+                    self.log.debug(
+                        "Download progress: %d/%d completed",
+                        completed, total
+                    )
                 except Exception as exc:
                     self.log.error("Download thread failed: %s", exc)
+
+            self.log.info(
+                "Parallel downloads completed: %d/%d successful",
+                completed, total
+            )
 
     def handle_directory(self, kwdict):
         """Set and create the target directory for downloads"""
@@ -654,6 +676,16 @@ class DownloadJob(Job):
         self.sleep_skip = util.build_duration_func(cfg("sleep-skip"))
         self.fallback = cfg("fallback", True)
         self._max_downloads = cfg("max-downloads", 5)
+
+        # Log parallel download configuration
+        if self._max_downloads and self._max_downloads > 1:
+            self.log.info(
+                "Parallel downloads enabled: %d concurrent downloads",
+                self._max_downloads
+            )
+        else:
+            self.log.debug("Sequential downloads enabled")
+
         if not cfg("download", True):
             # monkey-patch method to do nothing and always return True
             self.download = pathfmt.fix_extension
