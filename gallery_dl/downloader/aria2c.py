@@ -27,6 +27,8 @@ class Aria2cDownloader(DownloaderBase):
             [
                 "--continue=true",
                 "--file-allocation=none",
+                "--quiet=true",
+                "--console-log-level=error",
                 "-x",
                 "16",
                 "-s",
@@ -73,18 +75,19 @@ class Aria2cDownloader(DownloaderBase):
         try:
             process = subprocess.Popen(
                 args,
-                stdout=sys.stdout,
-                stderr=sys.stderr,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
             stdout, stderr = process.communicate()
 
             # Check if download was successful
             success = process.returncode == 0
             if not success:
+                stderr_text = stderr.decode() if stderr else ""
                 self.log.warning(
                     "aria2c exited with code %d - %s",
                     process.returncode,
-                    stderr.decode(),
+                    stderr_text,
                 )
             return success
 
