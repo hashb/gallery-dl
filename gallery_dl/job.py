@@ -223,19 +223,6 @@ class Job():
         for msg, url, kwdict in messages:
 
             if msg == Message.Directory:
-                # Check if directory actually changed
-                directory_key = str(kwdict) if kwdict else None
-                if (hasattr(self, '_download_queue') and
-                    hasattr(self, '_current_directory') and
-                    self._current_directory is not None and
-                    directory_key != self._current_directory and
-                    self._download_queue):
-                    # Flush pending downloads before changing directory
-                    self._process_download_queue()
-
-                if hasattr(self, '_current_directory'):
-                    self._current_directory = directory_key
-
                 if self.pred_post(url, kwdict):
                     process = True
                     self.handle_directory(kwdict)
@@ -394,7 +381,6 @@ class DownloadJob(Job):
         self._download_queue = []
         self._max_downloads = None
         self._pathfmt_lock = threading.Lock()
-        self._current_directory = None
 
     def handle_url(self, url, kwdict):
         """Download the resource specified in 'url'"""
@@ -564,6 +550,11 @@ class DownloadJob(Job):
 
     def handle_directory(self, kwdict):
         """Set and create the target directory for downloads"""
+        # Track the old directory for parallel downloads
+        old_directory = None
+        if self._max_downloads and self._max_downloads > 1 and self.pathfmt:
+            old_directory = self.pathfmt.directory
+
         if self.pathfmt is None:
             self.initialize(kwdict)
         else:
@@ -573,6 +564,14 @@ class DownloadJob(Job):
             if FLAGS.POST is not None:
                 FLAGS.process("POST")
             self.pathfmt.set_directory(kwdict)
+
+        # Flush queue if directory actually changed
+        if (self._max_downloads and self._max_downloads > 1 and
+            old_directory is not None and
+            self.pathfmt.directory != old_directory):
+            if self._download_queue:
+                self._process_download_queue()
+
         if "post" in self.hooks:
             for callback in self.hooks["post"]:
                 callback(self.pathfmt)
@@ -668,6 +667,10 @@ class DownloadJob(Job):
                 callback(pathfmt)
 
     def handle_finalize(self):
+        # Flush any remaining downloads before finalization
+        if hasattr(self, '_download_queue') and self._download_queue:
+            self._process_download_queue()
+
         if self.archive:
             if not self.status:
                 self.archive.finalize()
