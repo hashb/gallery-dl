@@ -211,9 +211,18 @@ class Job():
         for msg, url, kwdict in messages:
 
             if msg == Message.Directory:
-                # Flush any pending downloads before changing directory
-                if hasattr(self, '_download_queue') and self._download_queue:
+                # Check if directory actually changed
+                directory_key = str(kwdict) if kwdict else None
+                if (hasattr(self, '_download_queue') and
+                    hasattr(self, '_current_directory') and
+                    self._current_directory is not None and
+                    directory_key != self._current_directory and
+                    self._download_queue):
+                    # Flush pending downloads before changing directory
                     self._process_download_queue()
+
+                if hasattr(self, '_current_directory'):
+                    self._current_directory = directory_key
 
                 if self.pred_post(url, kwdict):
                     process = True
@@ -342,6 +351,7 @@ class DownloadJob(Job):
         self._download_queue = []
         self._max_downloads = None
         self._pathfmt_lock = threading.Lock()
+        self._current_directory = None
 
     def handle_url(self, url, kwdict):
         """Download the resource specified in 'url'"""
@@ -470,10 +480,16 @@ class DownloadJob(Job):
         max_workers = self._max_downloads if self._max_downloads else 1
 
         # Log parallel download start
-        self.log.info(
-            "Starting parallel downloads: %d files with %d workers",
-            len(queue), max_workers
-        )
+        if max_workers > 1:
+            self.log.info(
+                "Starting parallel downloads: %d files with %d workers",
+                len(queue), max_workers
+            )
+        else:
+            self.log.debug(
+                "Starting downloads: %d files",
+                len(queue)
+            )
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all downloads
@@ -489,17 +505,19 @@ class DownloadJob(Job):
                 completed += 1
                 try:
                     future.result()
-                    self.log.debug(
-                        "Download progress: %d/%d completed",
-                        completed, total
-                    )
+                    if max_workers > 1:
+                        self.log.debug(
+                            "Download progress: %d/%d completed",
+                            completed, total
+                        )
                 except Exception as exc:
                     self.log.error("Download thread failed: %s", exc)
 
-            self.log.info(
-                "Parallel downloads completed: %d/%d successful",
-                completed, total
-            )
+            if max_workers > 1:
+                self.log.info(
+                    "Parallel downloads completed: %d/%d successful",
+                    completed, total
+                )
 
     def handle_directory(self, kwdict):
         """Set and create the target directory for downloads"""
