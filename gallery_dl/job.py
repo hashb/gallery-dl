@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2015-2025 Mike Fährmann
+# Copyright 2015-2026 Mike Fährmann
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License version 2 as
@@ -211,9 +211,9 @@ class Job():
         for msg, url, kwdict in messages:
 
             if msg == Message.Directory:
+                self.update_kwdict(kwdict)
                 if self.pred_post(url, kwdict):
                     process = True
-                    self.update_kwdict(kwdict)
                     self.handle_directory(kwdict)
                 else:
                     process = None
@@ -226,19 +226,17 @@ class Job():
             elif msg == Message.Url:
                 if self.metadata_url:
                     kwdict[self.metadata_url] = url
+                self.update_kwdict(kwdict)
                 if self.pred_url(url, kwdict):
-                    self.update_kwdict(kwdict)
                     self.handle_url(url, kwdict)
                 if FLAGS.FILE is not None:
                     FLAGS.process("FILE")
 
             elif msg == Message.Queue:
-                if process is None:
-                    continue
+                self.update_kwdict(kwdict)
                 if self.metadata_url:
                     kwdict[self.metadata_url] = url
                 if self.pred_queue(url, kwdict):
-                    self.update_kwdict(kwdict)
                     self.handle_queue(url, kwdict)
                 if FLAGS.CHILD is not None:
                     FLAGS.process("CHILD")
@@ -282,32 +280,28 @@ class Job():
         self.pred_post = self._prepare_predicates("post", False)
         self.pred_queue = self._prepare_predicates("chapter", False)
 
-    def _prepare_predicates(self, target, skip=True):
+    def _prepare_predicates(self, target, skip):
         predicates = []
+        extr = self.extractor
 
-        if self.extractor.config(f"{target}-unique"):
-            predicates.append(util.UniquePredicate())
+        if extr.config(target + "-unique"):
+            predicates.append(util.predicate_unique())
 
-        if pfilter := self.extractor.config(f"{target}-filter"):
+        if pfilter := extr.config(target + "-filter"):
             try:
-                pred = util.FilterPredicate(pfilter, target)
+                predicates.append(util.predicate_filter(pfilter, target))
             except (SyntaxError, ValueError, TypeError) as exc:
-                self.extractor.log.warning(exc)
-            else:
-                predicates.append(pred)
+                extr.log.warning(exc)
 
-        if prange := self.extractor.config(f"{target}-range"):
+        if prange := extr.config(target + "-range"):
             try:
-                pred = util.RangePredicate(prange)
+                skip = extr.skip if skip and not pfilter else None
+                predicates.append(util.predicate_range(prange, skip))
             except ValueError as exc:
-                self.extractor.log.warning(
+                extr.log.warning(
                     "invalid %s range: %s", target, exc)
-            else:
-                if skip and pred.lower > 1 and not pfilter:
-                    pred.index += self.extractor.skip(pred.lower - 1)
-                predicates.append(pred)
 
-        return util.build_predicate(predicates)
+        return util.predicate_build(predicates)
 
     def get_logger(self, name):
         return self._wrap_logger(logging.getLogger(name))
@@ -551,14 +545,15 @@ class DownloadJob(Job):
             job = self.__class__(extr, self)
             pfmt = self.pathfmt
             pextr = self.extractor
+            parent = pextr.config("parent", pextr.parent)
 
-            if pfmt and pextr.config("parent-directory"):
+            if pfmt and pextr.config("parent-directory", parent):
                 extr._parentdir = pfmt.directory
             else:
                 extr._parentdir = pextr._parentdir
 
             if pmeta := pextr.config2(
-                    "parent-metadata", "metadata-parent", pextr.parent):
+                    "parent-metadata", "metadata-parent", parent):
                 if isinstance(pmeta, str):
                     data = self.kwdict.copy()
                     if kwdict:
@@ -570,9 +565,12 @@ class DownloadJob(Job):
                     if kwdict:
                         job.kwdict.update(kwdict)
 
+            if pextr.config("parent-session", parent):
+                extr.session = pextr.session
+
             while True:
                 try:
-                    if pextr.config("parent-skip"):
+                    if pextr.config("parent-skip", parent):
                         job._skipcnt = self._skipcnt
                         status = job.run()
                         self._skipcnt = job._skipcnt
@@ -1069,6 +1067,7 @@ class DataJob(Job):
         self.data_meta = []
         self.exception = None
         self.ascii = config.get(("output",), "ascii", ensure_ascii)
+        self.jsonl = config.get(("output",), "jsonl", False)
         self.resolve = 128 if resolve is True else (resolve or self.resolve)
 
         private = config.get(("output",), "private")
@@ -1076,6 +1075,8 @@ class DataJob(Job):
 
         if self.resolve > 0:
             self.handle_queue = self.handle_queue_resolve
+        if not self.jsonl:
+            self.out = util.noop
 
     def run(self):
         self._init()
@@ -1105,7 +1106,7 @@ class DataJob(Job):
             for msg in self.data:
                 util.transform_dict(msg[-1], util.number_to_string)
 
-        if self.file:
+        if self.file and not self.jsonl:
             # dump to 'file'
             try:
                 util.dump_json(self.data, self.file, self.ascii, 2)
@@ -1115,22 +1116,30 @@ class DataJob(Job):
 
         return 0
 
+    def out(self, msg):
+        self.file.write(util.json_dumps(msg))
+        self.file.write("\n")
+        self.file.flush()
+
     def handle_url(self, url, kwdict):
         kwdict = self.filter(kwdict)
+        self.out(msg := (Message.Url, url, kwdict))
         self.data_urls.append(url)
         self.data_meta.append(kwdict)
-        self.data.append((Message.Url, url, kwdict))
+        self.data.append(msg)
 
     def handle_directory(self, kwdict):
         kwdict = self.filter(kwdict)
+        self.out(msg := (Message.Directory, kwdict))
         self.data_post.append(kwdict)
-        self.data.append((Message.Directory, kwdict))
+        self.data.append(msg)
 
     def handle_queue(self, url, kwdict):
         kwdict = self.filter(kwdict)
+        self.out(msg := (Message.Queue, url, kwdict))
         self.data_urls.append(url)
         self.data_meta.append(kwdict)
-        self.data.append((Message.Queue, url, kwdict))
+        self.data.append(msg)
 
     def handle_queue_resolve(self, url, kwdict):
         if cls := kwdict.get("_extractor"):
@@ -1140,9 +1149,10 @@ class DataJob(Job):
 
         if not extr:
             kwdict = self.filter(kwdict)
+            self.out(msg := (Message.Queue, url, kwdict))
             self.data_urls.append(url)
             self.data_meta.append(kwdict)
-            return self.data.append((Message.Queue, url, kwdict))
+            return self.data.append(msg)
 
         job = self.__class__(extr, self, None, self.ascii, self.resolve-1)
         job.data = self.data

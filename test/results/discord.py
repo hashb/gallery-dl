@@ -83,7 +83,7 @@ __tests__ = (
     "filename" : str,
     "extension": "png",
     "id"       : str,
-    "label"    : {"general", "emojis", "stickers"},
+    "label"    : {"", "emojis", "stickers"},
     "owner_id" : "699203962691256400",
     "server"   : "MangaDex",
     "server_id": "403905762268545024",
@@ -105,6 +105,16 @@ __tests__ = (
     "server"   : "MangaDex",
     "server_id": "403905762268545024",
     "url"      : str,
+},
+
+{
+    "#url"     : "https://discord.com/channels/1067148002722062416/search?from=429235270664060948",
+    "#class"   : discord.DiscordServerSearchExtractor,
+},
+
+{
+    "#url"     : "https://discord.com/channels/1067148002722062416/search?has=file&has=link&mentions=429235270664060948",
+    "#class"   : discord.DiscordServerSearchExtractor,
 },
 
 )

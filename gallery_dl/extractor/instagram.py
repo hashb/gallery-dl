@@ -90,13 +90,11 @@ class InstagramExtractor(Extractor):
             post["count"] = len(files)
             yield Message.Directory, "", post
 
-            if "date" in post:
-                del post["date"]
             if reverse:
                 files.reverse()
 
             for file in files:
-                file.update(post)
+                file = {**post, **file}
 
                 if url := file.get("video_url"):
                     if videos:
@@ -139,6 +137,8 @@ class InstagramExtractor(Extractor):
                 page = "login"
             elif "/challenge/" in url:
                 page = "challenge"
+            elif 24 < len(url) < 28 and url[-1] == "/":
+                page = "home"
             else:
                 page = None
 
@@ -269,8 +269,8 @@ class InstagramExtractor(Extractor):
                 width = image["width"]
                 height = image["height"]
 
-                if self._warn_image < ((width < width_orig) +
-                                       (height < height_orig)):
+                if self._warn_image < ((width * 1.1 < width_orig) +
+                                       (height * 1.1 < height_orig)):
                     self.log.warning(
                         "%s: Available image resolutions lower than the "
                         "original (%sx%s < %sx%s). "
@@ -301,7 +301,7 @@ class InstagramExtractor(Extractor):
             if "reshared_story_media_author" in item:
                 media["author"] = item["reshared_story_media_author"]
             if "expiring_at" in item:
-                media["expires"] = self.parse_timestamp(post["expiring_at"])
+                media["expires"] = self.parse_timestamp(item["expiring_at"])
             if "subscription_media_visibility" in item:
                 media["subscription"] = item["subscription_media_visibility"]
 
