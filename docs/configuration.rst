@@ -212,12 +212,34 @@ Description
     Specifying a default |Path|_ with ``""`` is required.
 
 
+extractor.*.parent
+------------------
+Type
+    ``bool``
+Default
+    ``true``
+        ``[chevereto]`` |
+        ``erome``       |
+        ``[imagehost]``
+    ``false``
+        otherwise
+Description
+    Mark an extractor as a `parent` and enable
+
+    * `parent-directory <extractor.*.parent-directory_>`__
+    * `parent-metadata  <extractor.*.parent-metadata_>`__
+    * `parent-session   <extractor.*.parent-session_>`__
+    * `parent-skip      <extractor.*.parent-skip_>`__
+
+    for it by default.
+
+
 extractor.*.parent-directory
 ----------------------------
 Type
     ``bool``
 Default
-    ``false``
+    `extractor.parent <extractor.*.parent_>`__
 Description
     Use an extractor's current target directory as
     base-directory_ for any spawned child extractors.
@@ -231,11 +253,7 @@ Type
     * ``bool``
     * ``string``
 Default
-    ``true``
-        ``[chevereto]`` |
-        ``[imagehost]``
-    ``false``
-        otherwise
+    `extractor.parent <extractor.*.parent_>`__
 Description
     Forward a parent's metadata to its child extractors.
 
@@ -251,12 +269,27 @@ Description
         }
 
 
+extractor.*.parent-session
+--------------------------
+Type
+    ``bool``
+Default
+    `extractor.parent <extractor.*.parent_>`__
+Description
+    Share a parent's
+    `session <https://requests.readthedocs.io/en/latest/user/advanced/#session-objects>`__
+    with its child extractors, including
+    `cookies <extractor.*.cookies_>`__,
+    `headers <extractor.*.headers_>`__,
+    and other networking settings.
+
+
 extractor.*.parent-skip
 -----------------------
 Type
     ``bool``
 Default
-    ``false``
+    `extractor.parent <extractor.*.parent_>`__
 Description
     Share number of skipped downloads between parent and child extractors.
 
@@ -514,6 +547,7 @@ Default
         ``hdoujin``         |
         ``itaku``           |
         ``newgrounds``      |
+        ``[nitter]``        |
         ``[philomena]``     |
         ``pixiv-novel``     |
         ``plurk``           |
@@ -802,7 +836,9 @@ Default
     ``"gallery-dl/VERSION"``
         * ``[Danbooru]``
         * ``mangadex``
+        * ``[nitter]``
         * ``weasyl``
+        * ``[wikimedia]``
         * ``zerochan``
     ``"gallery-dl/VERSION (by mikf)"``
         * ``[E621]``
@@ -817,15 +853,28 @@ Default
 Example
     * ``"curl/8.14.1"``
     * ``"browser"``
-    * ``"@chrome"``
+    * ``"+chrome"``
+    * ``"@/opt/ChromeBrowser/bin/chrome"``
 Description
     User-Agent header value used for HTTP requests.
 
     Setting this value to ``"browser"`` will try to automatically detect
     and use the ``User-Agent`` header of the system's default browser.
 
-    Setting this value to ``"@BROWSER"``, e.g. ``"@chrome"``, will try to automatically detect
-    and use the ``User-Agent`` header of this installed browser.
+    | Starting this value with a ``+``
+      will use the latest ``User-Agent`` header of this preset target,
+      e.g. ``"+ff"``.
+    | (Supported values:
+      ``firefox`` | ``ff`` |
+      ``chrome`` | ``cr`` |
+      ``gallery-dl`` | ``gdl`` |
+      ``google-bot`` | ``bot``
+      )
+
+    | Starting this value with an ``@``
+     will try to automatically detect and use the ``User-Agent`` header
+     of this installed browser,
+    | e.g. ``"@C:/Program Files/Zen Browser/zen-browser.exe"``.
 
 
 extractor.*.browser
@@ -1725,28 +1774,6 @@ Description
         Get posts from "Latest Updates" pages
 
 
-extractor.batoto.domain
------------------------
-Type
-    ``string``
-Default
-    ``"auto"``
-Example
-    ``"mangatoto.org"``
-Description
-    Specifies the domain used by ``batoto`` extractors.
-
-    ``"auto"`` | ``"url"``
-        Use the input URL's domain
-    ``"nolegacy"``
-        Use the input URL's domain
-        - replace legacy domains with ``"xbato.org"``
-    ``"nowarn"``
-        Use the input URL's domain
-        - do not warn about legacy domains
-    any ``string``
-        Use this domain
-
 
 extractor.bbc.width
 -------------------
@@ -1801,6 +1828,16 @@ Default
     ``false``
 Description
     Extract files from quoted content.
+
+
+extractor.bilibili.livephoto
+----------------------------
+Type
+    ``bool``
+Default
+    ``true``
+Description
+    Download ``livephoto`` files.
 
 
 extractor.[blogger].api-key
@@ -2051,6 +2088,20 @@ Description
         Match only URLs with known TLDs
 
 
+extractor.[chevereto].password
+------------------------------
+Type
+    * ``string``
+    * ``list`` of ``strings``
+Default
+    ``null``
+Example
+    * ``pw1,pw2,foobar``
+    * ``["pw1", "pw2", "foobar"]``
+Description
+    Password value(s) used to access protected albums.
+
+
 extractor.cien.files
 --------------------
 Type
@@ -2247,7 +2298,7 @@ Type
     * ``string``
     * ``list`` of ``strings``
 Default
-    ``"quality=100"``
+    ``"original=true,quality=100"``
 Example
     * ``"+transcode=true,quality=100"``
     * ``["+", "transcode=true", "quality=100"]``
@@ -3130,9 +3181,21 @@ extractor.fansly.formats
 Type
     ``list`` of ``integers``
 Default
+    ``null``
+Example
     ``[1, 2, 3, 4, 302, 303]``
 Description
     List of file formats to consider during format selection.
+
+
+extractor.fansly.previews
+-------------------------
+Type
+    ``bool``
+Default
+    ``true``
+Description
+    Download `previews` if no other format is available.
 
 
 extractor.fansly.token
@@ -4052,6 +4115,20 @@ Description
     the first in the list gets chosen (usually `mp3`).
 
 
+extractor.koofr.recursive
+-------------------------
+Type
+    ``bool``
+Default
+    ``true``
+Description
+    ``true``
+        Recursively descent into subfolders
+        while downloading individual files.
+    ``false``
+        Download shared `/links/` with multiple files as a single `.zip` file.
+
+
 extractor.lolisafe.domain
 -------------------------
 Type
@@ -4423,8 +4500,8 @@ Note
     It is possible to use ``"all"`` instead of listing all values separately.
 
 
-extractor.nitter.quoted
------------------------
+extractor.[nitter].quoted
+-------------------------
 Type
     ``bool``
 Default
@@ -4433,8 +4510,8 @@ Description
     Fetch media from quoted Tweets.
 
 
-extractor.nitter.retweets
--------------------------
+extractor.[nitter].retweets
+---------------------------
 Type
     ``bool``
 Default
@@ -4443,8 +4520,8 @@ Description
     Fetch media from Retweets.
 
 
-extractor.nitter.videos
------------------------
+extractor.[nitter].videos
+-------------------------
 Type
     * ``bool``
     * ``string``
@@ -4755,6 +4832,16 @@ Description
     Recursively download files from subfolders.
 
 
+extractor.pixeldrain.zip
+------------------------
+Type
+    ``bool``
+Default
+    ``false``
+Description
+    Download albums as a single `.zip` file.
+
+
 extractor.pixiv.include
 -----------------------
 Type
@@ -4775,6 +4862,7 @@ Supported Values
     * ``favorite``
     * ``novel-user``
     * ``novel-bookmark``
+    * ``sketch``
 Note
     It is possible to use ``"all"`` instead of listing all values separately.
 
@@ -5826,11 +5914,75 @@ Description
 extractor.tiktok.covers
 -----------------------
 Type
-    ``bool``
+    * ``bool``
+    * ``string``
 Default
     ``false``
 Description
     Download video covers.
+
+    ``true``
+        Download the first cover found in the following order:
+
+        * ``thumbnail``
+        * ``cover``
+        * ``originCover``
+        * ``dynamicCover``
+    ``false``
+        Do not download covers
+    ``"all"``
+        Download all available covers
+
+
+extractor.tiktok.photos
+-----------------------
+Type
+    ``bool``
+Default
+    ``true``
+Description
+    Download photos.
+
+
+extractor.tiktok.subtitles
+--------------------------
+Type
+    * ``bool``
+    * ``string``
+Default
+    ``false``
+Example
+    * ``"all"``
+    * ``"ASR,MT,LC"``
+    * ``"ASR,eng-US"``
+Description
+    Download video subtitles.
+    The subtitles can be filtered by source or language.
+    The following source types can be filtered:
+
+    * ``ASR`` - Automatic Speech Recognition
+    * ``MT`` - Machine Translation
+    * ``LC`` - Local Captions / Creator Captions
+
+    If both source types and language codes are provided,
+    only subtitles matching both are downloaded.
+
+    ``true``
+        Download all subtitles tagged ``ASR``
+    ``false``
+        Do not download subtitles
+    ``"all"``
+        Download all available subtitles.
+    ``"ASR,MT,eng-US,cmn-Hans-CN"``
+        Download english and simplified chinese subtitles
+        that are either automatically recognized or machine translated.
+
+        The source types and languages can be listed in any order.
+Note
+    It is not possible to filter all subtitles of a specific source type,
+    while also filtering for additional languages of another source type.
+    (e.g. any ASR subtitle + fra-FR of any source type)
+    For this, refer to `extractor.*.image-filter`_.
 
 
 extractor.tiktok.videos
@@ -5843,18 +5995,52 @@ Description
     Download videos using |ytdl|.
 
 
-extractor.tiktok.user.avatar
-----------------------------
+extractor.tiktok.tiktok-range
+-----------------------------
+Type
+    ``string``
+Default
+    ``""``
+Example
+    ``"1-20"``
+Description
+    Range or playlist indices of ``tiktok`` posts to extract.
+
+    When using `ytdl`, see
+    `ytdl/playlist_items <https://github.com/yt-dlp/yt-dlp/blob/3042afb5fe342d3a00de76704cd7de611acc350e/yt_dlp/YoutubeDL.py#L289>`__
+    for details.
+
+
+extractor.tiktok.posts.order-posts
+----------------------------------
+Type
+    ``string``
+Default
+    ``"desc"``
+Description
+    Controls the order in which
+    posts are processed.
+
+    ``"asc"`` | ``"reverse"``
+        Ascending order (oldest first)
+    ``"desc"``
+        Descending order (newest first)
+    ``"popular"``
+        *Popular* order
+
+
+extractor.tiktok.posts.ytdl
+---------------------------
 Type
     ``bool``
 Default
-    ``true``
+    ``false``
 Description
-    Download user avatars.
+    Extract user posts with |ytdl|
 
 
-extractor.tiktok.user.module
-----------------------------
+extractor.tiktok.posts.module
+-----------------------------
 Type
     |Module|_
 Default
@@ -5866,20 +6052,25 @@ Description
     See `extractor.ytdl.module`_.
 
 
-extractor.tiktok.user.tiktok-range
-----------------------------------
+extractor.tiktok.user.include
+-----------------------------
 Type
-    ``string``
+    * ``string``
+    * ``list`` of ``strings``
 Default
-    ``""``
-Example
-    ``"1-20"``
+    ``["avatar", "posts"]``
 Description
-    Range or playlist indices of ``tiktok`` user posts to extract.
-
-    See
-    `ytdl/playlist_items <https://github.com/yt-dlp/yt-dlp/blob/3042afb5fe342d3a00de76704cd7de611acc350e/yt_dlp/YoutubeDL.py#L289>`__
-    for details.
+    A (comma-separated) list of subcategories to include
+    when processing a user profile.
+Supported Values
+    * ``avatar``
+    * ``posts``
+    * ``reposts``
+    * ``stories``
+    * ``likes``
+    * ``saved``
+Note
+    It is possible to use ``"all"`` instead of listing all values separately.
 
 
 extractor.tumblr.avatar
@@ -6349,6 +6540,9 @@ Description
 
     ``"abort"``
         Raise an error and stop extraction
+    ``"abort:N"``
+        Raise an error and stop extraction
+        after waiting ``N`` times until rate limit reset
     ``"wait"``
         Wait until rate limit reset
     ``"wait:N"``
@@ -6745,13 +6939,31 @@ Note
     This requires 1 additional HTTP request per submission.
 
 
+extractor.webtoons.bgm
+----------------------
+Type
+    * ``bool``
+    * ``string``
+Default
+    ``true``
+Example
+    ``"aac"``
+Description
+    Download an episode's `background music` if available.
+
+    If this is a ``string``, remux the downloaded `background music` file
+    into the given format.
+Note
+    Requires |ytdl| for downloads
+    and |ffmpeg| for remuxing
+
+
 extractor.webtoons.quality
 --------------------------
 Type
     * ``integer``
     * ``string``
     * ``object`` (`ext` → `type`)
-
 Default
     ``"original"``
 Example
@@ -6795,6 +7007,26 @@ Description
     Useful for creating CBZ archives with actual source thumbnails.
 
 
+extractor.weebdex.data-saver
+----------------------------
+Type
+    ``bool``
+Default
+    ``false``
+Description
+    Enable `Data Saver` mode and download lower quality versions of chapters.
+
+
+extractor.weebdex.manga.lang
+----------------------------
+Type
+    ``string``
+Default
+    ``"en"``
+Description
+    |ISO 639-1| code selecting which chapters to download.
+
+
 extractor.weibo.gifs
 --------------------
 Type
@@ -6825,6 +7057,7 @@ Supported Values
     * ``newvideo``
     * ``article``
     * ``album``
+    * ``subalbums``
 Note
     It is possible to use ``"all"`` instead of listing all values separately.
 
@@ -6883,6 +7116,16 @@ Description
     Download video files.
 
 
+extractor.weibo.album.subalbums
+-------------------------------
+Type
+    ``bool``
+Default
+    ``false``
+Description
+    Extract subalbum media.
+
+
 extractor.wikimedia.format
 --------------------------
 Type
@@ -6934,6 +7177,18 @@ Default
     ``true``
 Description
     For ``Category:`` pages, recursively descent into subcategories.
+
+
+extractor.[xenforo].metadata
+----------------------------
+Type
+    ``bool``
+Default
+    ``false``
+Description
+    Extract detailed metadata for `media` files.
+Note
+    This requires 1 additional HTTP request per file.
 
 
 extractor.[xenforo].order-posts
@@ -7832,6 +8087,17 @@ Default
     ``true``
 Description
     Include fallback URLs in the output of ``-g/--get-urls``.
+
+
+output.jsonl
+------------
+Type
+    ``bool``
+Default
+    ``false``
+Description
+    Output ``-j/--dump-json`` & ``-J/--resolve-json``
+    data in `JSON Lines <https://jsonlines.org/>`__ format.
 
 
 output.private
@@ -9100,6 +9366,7 @@ Special Values
             {
                 "coomer"       : "coomerparty",
                 "kemono"       : "kemonoparty",
+                "turbo"        : "saint",
                 "schalenetwork": "koharu",
                 "naver-chzzk"  : "chzzk",
                 "naver-blog"   : "naver",
@@ -9127,7 +9394,8 @@ Default
             "chzzk"        : "naver-chzzk",
             "naver"        : "naver-blog",
             "naverwebtoon" : "naver-webtoon",
-            "pixiv"        : "pixiv-novel"
+            "pixiv"        : "pixiv-novel",
+            "saint"        : "turbo"
         }
 Description
     Duplicate the configuration settings of extractor `categories`
@@ -9238,6 +9506,22 @@ Description
     ``"defaultdict"``
         Prevent exceptions when accessing undefined variables
         by using a `defaultdict <https://docs.python.org/3/library/collections.html#collections.defaultdict>`__
+
+
+format-operator-dot
+-------------------
+Type
+    ``bool``
+Default
+    ``true``
+Description
+    In standard `Format Strings`_, allow the `dot` operator ``.``
+    to function as a general access operator
+    in addition to regular attribute access.
+
+    * ``obj.attribute``
+    * ``dict.fieldname``
+    * ``list.123``
 
 
 format-separator

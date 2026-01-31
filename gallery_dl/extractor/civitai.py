@@ -54,7 +54,7 @@ class CivitaiExtractor(Extractor):
         elif quality_video is not None and quality:
             self._video_quality = self._image_quality
         else:
-            self._video_quality = "quality=100"
+            self._video_quality = "original=true,quality=100"
         self._video_ext = "webm"
 
         if metadata := self.config("metadata"):
@@ -691,7 +691,7 @@ class CivitaiTrpcAPI():
         self.root = extractor.root + "/api/trpc/"
         self.headers = {
             "content-type"    : "application/json",
-            "x-client-version": "5.0.954",
+            "x-client-version": "5.0.1386",
             "x-client-date"   : "",
             "x-client"        : "web",
             "x-fingerprint"   : "undefined",
@@ -796,7 +796,6 @@ class CivitaiTrpcAPI():
 
     def posts(self, params, defaults=True):
         endpoint = "post.getInfinite"
-        meta = {"cursor": ("Date",)}
 
         if defaults:
             params = self._merge_params(params, {
@@ -811,8 +810,7 @@ class CivitaiTrpcAPI():
             })
 
         params = self._type_params(params)
-        return self._pagination(endpoint, params, meta,
-                                user=("username" in params))
+        return self._pagination(endpoint, params, user=("username" in params))
 
     def collection(self, collection_id):
         endpoint = "collection.getById"
