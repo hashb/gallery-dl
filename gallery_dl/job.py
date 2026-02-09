@@ -11,6 +11,8 @@ import errno
 import logging
 import functools
 import collections
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from . import (
     extractor,
@@ -221,15 +223,6 @@ class Job():
         for msg, url, kwdict in messages:
 
             if msg == Message.Directory:
-                if follow_urls is not None:
-                    for furl in follow_urls:
-                        if metadata_url is not None:
-                            follow_kwdict[metadata_url] = furl
-                        if self.pred_queue(furl, follow_kwdict):
-                            self.handle_queue(furl, follow_kwdict)
-                    follow_urls = None
-
-                self.update_kwdict(kwdict)
                 if self.pred_post(url, kwdict):
                     process = True
                     self.handle_directory(kwdict)
@@ -272,12 +265,9 @@ class Job():
                 if FLAGS.CHILD is not None:
                     FLAGS.process("CHILD")
 
-        if follow_urls is not None:
-            for furl in follow_urls:
-                if metadata_url is not None:
-                    follow_kwdict[metadata_url] = furl
-                if self.pred_queue(furl, follow_kwdict):
-                    self.handle_queue(furl, follow_kwdict)
+        # Flush any remaining downloads
+        if hasattr(self, '_download_queue') and self._download_queue:
+            self._process_download_queue()
 
         return msg
 
@@ -388,92 +378,183 @@ class DownloadJob(Job):
         self.visited = set() if parent is None else parent.visited
         self._extractor_filter = None
         self._skipcnt = 0
+        self._download_queue = []
+        self._max_downloads = None
+        self._pathfmt_lock = threading.Lock()
 
     def handle_url(self, url, kwdict):
         """Download the resource specified in 'url'"""
+        # If parallel downloads are enabled, queue the download
+        if self._max_downloads and self._max_downloads > 1:
+            # Make a copy of kwdict since it may be reused
+            self._download_queue.append((url, kwdict.copy()))
+        else:
+            # Process immediately (sequential mode)
+            self._download_single(url, kwdict)
+
+    def _download_single(self, url, kwdict):
+        """Download a single resource"""
         hooks = self.hooks
-        pathfmt = self.pathfmt
         archive = self.archive
 
-        # prepare download
-        pathfmt.set_filename(kwdict)
+        # Thread-safe preparation phase
+        with self._pathfmt_lock:
+            pathfmt = self.pathfmt
 
-        if "prepare" in hooks:
-            for callback in hooks["prepare"]:
-                callback(pathfmt)
+            # prepare download
+            pathfmt.set_filename(kwdict)
 
-        if archive is not None and archive.check(kwdict):
-            pathfmt.fix_extension()
-            self.handle_skip()
-            return
+            if "prepare" in hooks:
+                for callback in hooks["prepare"]:
+                    callback(pathfmt)
 
-        if pathfmt.extension and not self.metadata_http:
-            pathfmt.build_path()
-
-            if pathfmt.exists():
-                if archive is not None and self._archive_write_skip:
-                    archive.add(kwdict)
+            if archive is not None and archive.check(kwdict):
+                pathfmt.fix_extension()
                 self.handle_skip()
                 return
 
-        if "prepare-after" in hooks:
-            for callback in hooks["prepare-after"]:
-                callback(pathfmt)
+            if pathfmt.extension and not self.metadata_http:
+                pathfmt.build_path()
 
-            if kwdict.pop("_file_recheck", False) and pathfmt.exists():
-                if archive is not None and self._archive_write_skip:
-                    archive.add(kwdict)
-                self.handle_skip()
-                return
+                if pathfmt.exists():
+                    if archive is not None and self._archive_write_skip:
+                        archive.add(kwdict)
+                    self.handle_skip()
+                    return
 
+            if "prepare-after" in hooks:
+                for callback in hooks["prepare-after"]:
+                    callback(pathfmt)
+
+                if kwdict.pop("_file_recheck", False) and pathfmt.exists():
+                    if archive is not None and self._archive_write_skip:
+                        archive.add(kwdict)
+                    self.handle_skip()
+                    return
+
+            # Store paths for use outside the lock
+            temppath = pathfmt.temppath
+            filepath = pathfmt.path
+            filename = pathfmt.filename
+
+        # Log download start in parallel mode
+        if self._max_downloads and self._max_downloads > 1:
+            self.log.debug("Downloading: %s", filename)
+
+        # Sleep outside the lock
         if self.sleep is not None:
             self.extractor.sleep(self.sleep(), "download")
 
-        # download from URL
-        if not self.download(url):
+        # Download phase (outside lock for parallelism)
+        download_success = self.download(url)
 
+        if not download_success:
             # use fallback URLs if available/enabled
             fallback = kwdict.get("_fallback", ()) if self.fallback else ()
-            for num, url in enumerate(fallback, 1):
-                util.remove_file(pathfmt.temppath)
+            for num, fallback_url in enumerate(fallback, 1):
+                util.remove_file(temppath)
                 self.log.info("Trying fallback URL #%d", num)
-                if self.download(url):
+                if self.download(fallback_url):
+                    download_success = True
                     break
-            else:
+
+        # Thread-safe finalization phase
+        with self._pathfmt_lock:
+            pathfmt = self.pathfmt
+            # Re-sync pathfmt state (in case it was modified by other threads)
+            pathfmt.set_filename(kwdict)
+            if pathfmt.extension and not self.metadata_http:
+                pathfmt.build_path()
+
+            if not download_success:
                 # download failed
                 self.status |= 4
                 self.log.error("Failed to download %s",
-                               pathfmt.filename or url)
+                               filename or url)
                 if "error" in hooks:
                     for callback in hooks["error"]:
                         callback(pathfmt)
                 return
 
-        if not pathfmt.temppath:
-            if archive is not None and self._archive_write_skip:
+            if not pathfmt.temppath:
+                if archive is not None and self._archive_write_skip:
+                    archive.add(kwdict)
+                self.handle_skip()
+                return
+
+            # run post processors
+            if "file" in hooks:
+                for callback in hooks["file"]:
+                    callback(pathfmt)
+
+            # download succeeded
+            pathfmt.finalize()
+            self.out.success(pathfmt.path)
+            self._skipcnt = 0
+            if archive is not None and self._archive_write_file:
                 archive.add(kwdict)
-            self.handle_skip()
+            if "after" in hooks:
+                for callback in hooks["after"]:
+                    callback(pathfmt)
+            if archive is not None and self._archive_write_after:
+                archive.add(kwdict)
+
+    def _process_download_queue(self):
+        """Process queued downloads in parallel"""
+        if not self._download_queue:
             return
 
-        # run post processors
-        if "file" in hooks:
-            for callback in hooks["file"]:
-                callback(pathfmt)
+        queue = self._download_queue
+        self._download_queue = []
+        max_workers = self._max_downloads if self._max_downloads else 1
 
-        # download succeeded
-        pathfmt.finalize()
-        self.out.success(pathfmt.path)
-        self._skipcnt = 0
-        if archive is not None and self._archive_write_file:
-            archive.add(kwdict)
-        if "after" in hooks:
-            for callback in hooks["after"]:
-                callback(pathfmt)
-        if archive is not None and self._archive_write_after:
-            archive.add(kwdict)
+        # Log parallel download start
+        if max_workers > 1:
+            self.log.info(
+                "Starting parallel downloads: %d files with %d workers",
+                len(queue), max_workers
+            )
+        else:
+            self.log.debug(
+                "Starting downloads: %d files",
+                len(queue)
+            )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all downloads
+            futures = {}
+            for url, kwdict in queue:
+                future = executor.submit(self._download_single, url, kwdict)
+                futures[future] = kwdict.get('filename', url)
+
+            # Wait for all downloads to complete with progress
+            completed = 0
+            total = len(futures)
+            for future in as_completed(futures):
+                completed += 1
+                try:
+                    future.result()
+                    if max_workers > 1:
+                        self.log.debug(
+                            "Download progress: %d/%d completed",
+                            completed, total
+                        )
+                except Exception as exc:
+                    self.log.error("Download thread failed: %s", exc)
+
+            if max_workers > 1:
+                self.log.info(
+                    "Parallel downloads completed: %d/%d successful",
+                    completed, total
+                )
 
     def handle_directory(self, kwdict):
         """Set and create the target directory for downloads"""
+        # Track the old directory for parallel downloads
+        old_directory = None
+        if self._max_downloads and self._max_downloads > 1 and self.pathfmt:
+            old_directory = self.pathfmt.directory
+
         if self.pathfmt is None:
             self.initialize(kwdict)
         else:
@@ -483,6 +564,14 @@ class DownloadJob(Job):
             if FLAGS.POST is not None:
                 FLAGS.process("POST")
             self.pathfmt.set_directory(kwdict)
+
+        # Flush queue if directory actually changed
+        if (self._max_downloads and self._max_downloads > 1 and
+            old_directory is not None and
+            self.pathfmt.directory != old_directory):
+            if self._download_queue:
+                self._process_download_queue()
+
         if "post" in self.hooks:
             for callback in self.hooks["post"]:
                 callback(self.pathfmt)
@@ -578,6 +667,10 @@ class DownloadJob(Job):
                 callback(pathfmt)
 
     def handle_finalize(self):
+        # Flush any remaining downloads before finalization
+        if hasattr(self, '_download_queue') and self._download_queue:
+            self._process_download_queue()
+
         if self.archive:
             if not self.status:
                 self.archive.finalize()
@@ -664,6 +757,17 @@ class DownloadJob(Job):
         self.sleep = util.build_duration_func(cfg("sleep"))
         self.sleep_skip = util.build_duration_func(cfg("sleep-skip"))
         self.fallback = cfg("fallback", True)
+        self._max_downloads = cfg("max-downloads", 5)
+
+        # Log parallel download configuration
+        if self._max_downloads and self._max_downloads > 1:
+            self.log.info(
+                "Parallel downloads enabled: %d concurrent downloads",
+                self._max_downloads
+            )
+        else:
+            self.log.debug("Sequential downloads enabled")
+
         if not cfg("download", True):
             # monkey-patch method to do nothing and always return True
             self.download = pathfmt.fix_extension
