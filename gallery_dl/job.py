@@ -11,6 +11,7 @@ import errno
 import logging
 import functools
 import collections
+import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -468,9 +469,14 @@ class DownloadJob(Job):
         hooks = self.hooks
         archive = self.archive
 
+        parallel = self._max_downloads and self._max_downloads > 1
+
         # Thread-safe preparation phase
         with self._pathfmt_lock:
-            pathfmt = self.pathfmt
+            # each parallel download gets its own PathFormat object,
+            # since downloaders read per-file data (e.g. '_http_headers')
+            # from it and write the file to its 'temppath'
+            pathfmt = copy.copy(self.pathfmt) if parallel else self.pathfmt
 
             # prepare download
             pathfmt.set_filename(kwdict)
@@ -503,14 +509,9 @@ class DownloadJob(Job):
                     self.handle_skip()
                     return
 
-            # Store paths for use outside the lock
-            temppath = pathfmt.temppath
-            filepath = pathfmt.path
-            filename = pathfmt.filename
-
         # Log download start in parallel mode
-        if self._max_downloads and self._max_downloads > 1:
-            self.log.debug("Downloading: %s", filename)
+        if parallel:
+            self.log.debug("Downloading: %s", pathfmt.filename)
 
         # Sleep outside the lock
         if self.sleep is not None:
@@ -519,15 +520,15 @@ class DownloadJob(Job):
         # Download phase (outside lock for parallelism)
         download_success = False
         try:
-            if self.download(url):
+            if self.download(url, pathfmt):
                 download_success = True
             else:
                 # use fallback URLs if available/enabled
                 fallback = kwdict.get("_fallback", ()) if self.fallback else ()
                 for num, fallback_url in enumerate(fallback, 1):
-                    util.remove_file(temppath)
+                    util.remove_file(pathfmt.temppath)
                     self.log.info("Trying fallback URL #%d", num)
-                    if self.download(fallback_url):
+                    if self.download(fallback_url, pathfmt):
                         download_success = True
                         break
         except exception.StopDownload:
@@ -535,17 +536,11 @@ class DownloadJob(Job):
 
         # Thread-safe finalization phase
         with self._pathfmt_lock:
-            pathfmt = self.pathfmt
-            # Re-sync pathfmt state (in case it was modified by other threads)
-            pathfmt.set_filename(kwdict)
-            if pathfmt.extension and not self.metadata_http:
-                pathfmt.build_path()
-
             if not download_success:
                 # download failed
                 self.status |= 4
                 self.log.error("Failed to download %s",
-                               filename or url)
+                               pathfmt.filename or url)
                 if "error" in hooks:
                     for callback in hooks["error"]:
                         callback(pathfmt)
@@ -798,11 +793,13 @@ class DownloadJob(Job):
         if self.sleep_skip is not None:
             self.extractor.sleep(self.sleep_skip(), "skip")
 
-    def download(self, url):
+    def download(self, url, pathfmt=None):
         """Download 'url'"""
+        if pathfmt is None:
+            pathfmt = self.pathfmt
         if downloader := self.get_downloader(url[:url.find(":")]):
             try:
-                return downloader.download(url, self.pathfmt)
+                return downloader.download(url, pathfmt)
             except OSError as exc:
                 if exc.errno == errno.ENOSPC:
                     raise
