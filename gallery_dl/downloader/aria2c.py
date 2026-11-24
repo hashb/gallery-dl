@@ -1,9 +1,10 @@
 """Downloader module that uses aria2c"""
 
 from .common import DownloaderBase
+from requests.cookies import get_cookie_header
+import requests
 import subprocess
 import os
-import sys
 
 
 class Aria2cDownloader(DownloaderBase):
@@ -13,6 +14,12 @@ class Aria2cDownloader(DownloaderBase):
         DownloaderBase.__init__(self, job)
         self.aria2c_args = self.config("args", default=[])
         self.aria2c_path = self.config("path", default="aria2c")
+        self.connections = self.config("connections", 1)
+        self.headers = self.config("headers")
+        extractor = job.extractor
+        self.retries = self.config("retries", extractor._retries)
+        self.timeout = self.config("timeout", extractor._timeout)
+        self.verify = self.config("verify", extractor._verify)
 
     def download(self, url, pathfmt):
         # Skip downloads if content exists
@@ -23,40 +30,62 @@ class Aria2cDownloader(DownloaderBase):
         args = [self.aria2c_path]
 
         # Add default arguments
+        connections = str(self.connections)
         args.extend(
             [
                 "--continue=true",
                 "--file-allocation=none",
-                "--quiet=true",
+                "--summary-interval=0",
+                "--download-result=hide",
                 "--console-log-level=error",
-                "-x",
-                "16",
-                "-s",
-                "16",
+                "--enable-color=false",
+                "--max-connection-per-server=" + connections,
+                "--split=" + connections,
             ]
         )
+
+        retries = self.retries
+        if retries is None or retries < 0 or retries == float("inf"):
+            args.append("--max-tries=0")  # unlimited
+        else:
+            args.append("--max-tries=" + str(int(retries) + 1))
+        if timeout := self.timeout:
+            if isinstance(timeout, (tuple, list)):
+                timeout = max(timeout)
+            args.append("--timeout=" + str(max(1, int(timeout))))
+        if self.verify is False:
+            args.append("--check-certificate=false")
+        elif isinstance(self.verify, str):
+            args.append("--ca-certificate=" + self.verify)
 
         # Add custom arguments
         args.extend(self.aria2c_args)
 
-        # Add headers from session
+        # Collect HTTP headers (same order of precedence as 'http')
+        headers = {"Accept": "*/*"}
         if self.session:
-            for name, value in self.session.headers.items():
-                args.extend(["--header", f"{name}: {value}"])
+            headers.update(self.session.headers)
+        if extra := pathfmt.kwdict.get("_http_headers"):
+            headers.update(extra)
+        if self.headers:
+            headers.update(self.headers)
 
-            # Add cookies from session
-            if self.session.cookies:
-                cookie_header = "; ".join(
-                    f"{cookie.name}={cookie.value}" for cookie in self.session.cookies
-                )
-                args.extend(["--header", f"Cookie: {cookie_header}"])
+        # Add cookies matching this URL
+        if self.session and self.session.cookies:
+            if cookie := get_cookie_header(
+                    self.session.cookies,
+                    requests.Request("GET", url).prepare()):
+                headers["Cookie"] = cookie
 
-            # Add proxy settings from session
-            if self.proxies:
-                if "http" in self.proxies:
-                    args.extend(["--all-proxy", self.proxies["http"]])
-                elif "https" in self.proxies:
-                    args.extend(["--all-proxy", self.proxies["https"]])
+        for name, value in headers.items():
+            if value is not None:
+                args.extend(("--header", f"{name}: {value}"))
+
+        # Add proxy settings
+        if self.proxies:
+            proxy = self.proxies.get("https") or self.proxies.get("http")
+            if proxy:
+                args.extend(["--all-proxy", proxy])
 
         # Add output path
         args.extend(
@@ -73,27 +102,38 @@ class Aria2cDownloader(DownloaderBase):
 
         # Execute aria2c
         try:
-            process = subprocess.Popen(
+            process = subprocess.run(
                 args,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
-            stdout, stderr = process.communicate()
-
-            # Check if download was successful
-            success = process.returncode == 0
-            if not success:
-                stderr_text = stderr.decode() if stderr else ""
-                self.log.warning(
-                    "aria2c exited with code %d - %s",
-                    process.returncode,
-                    stderr_text,
-                )
-            return success
-
         except Exception as exc:
             self.log.warning("aria2c download failed: %s", exc)
             return False
+
+        if process.returncode == 0:
+            return True
+
+        self.log.warning("aria2c exited with code %d%s",
+                         process.returncode,
+                         self._error_message(process.stdout))
+        return False
+
+    @staticmethod
+    def _error_message(output):
+        """Extract the most relevant error line from aria2c's output"""
+        reason = ""
+        for line in output.decode(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("->") or "errorCode=" in line:
+                reason = line
+        if not reason:
+            return ""
+        # strip "-> [File.cc:123] errorCode=22 " prefix
+        _, _, msg = reason.rpartition("] ")
+        if msg.startswith("errorCode="):
+            msg = msg.partition(" ")[2]
+        return " - " + (msg or reason)
 
 
 __downloader__ = Aria2cDownloader
