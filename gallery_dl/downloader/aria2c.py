@@ -12,6 +12,9 @@ class Aria2cDownloader(DownloaderBase):
 
     def __init__(self, job):
         DownloaderBase.__init__(self, job)
+        self._job = job
+        self._http = None
+        self.fallback = self.config("fallback", True)
         self.aria2c_args = self.config("args", default=[])
         self.aria2c_path = self.config("path", default="aria2c")
         self.connections = self.config("connections", 1)
@@ -39,6 +42,7 @@ class Aria2cDownloader(DownloaderBase):
                 "--download-result=hide",
                 "--console-log-level=error",
                 "--enable-color=false",
+                "--no-want-digest-header=true",
                 "--max-connection-per-server=" + connections,
                 "--split=" + connections,
             ]
@@ -117,7 +121,24 @@ class Aria2cDownloader(DownloaderBase):
         self.log.warning("aria2c exited with code %d%s",
                          process.returncode,
                          self._error_message(process.stdout))
-        return False
+
+        if not self.fallback:
+            return False
+
+        # retry with the built-in HTTP downloader, which supports
+        # everything gallery-dl's own requests do (TLS settings,
+        # browser emulation, adapters, ...)
+        self.log.info("Retrying with built-in HTTP downloader")
+        temppath = pathfmt.temppath or pathfmt.path
+        for p in (temppath, temppath + ".aria2"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        if self._http is None:
+            from .http import HttpDownloader
+            self._http = HttpDownloader(self._job)
+        return self._http.download(url, pathfmt)
 
     @staticmethod
     def _error_message(output):

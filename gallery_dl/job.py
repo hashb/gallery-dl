@@ -232,6 +232,15 @@ class Job():
         for msg, url, kwdict in messages:
 
             if msg == Message.Directory:
+                if follow_urls is not None:
+                    for furl in follow_urls:
+                        if metadata_url is not None:
+                            follow_kwdict[metadata_url] = furl
+                        if self.pred_queue(furl, follow_kwdict):
+                            self.handle_queue(furl, follow_kwdict)
+                    follow_urls = None
+
+                self.update_kwdict(kwdict)
                 if self.pred_post(url, kwdict):
                     process = True
                     self.handle_directory(kwdict)
@@ -273,6 +282,13 @@ class Job():
                     self.handle_queue(url, kwdict)
                 if FLAGS.CHILD is not None:
                     FLAGS.process("CHILD")
+
+        if follow_urls is not None:
+            for furl in follow_urls:
+                if metadata_url is not None:
+                    follow_kwdict[metadata_url] = furl
+                if self.pred_queue(furl, follow_kwdict):
+                    self.handle_queue(furl, follow_kwdict)
 
         # Flush any remaining downloads
         if hasattr(self, '_download_queue') and self._download_queue:
@@ -809,7 +825,7 @@ class DownloadJob(Job):
             instance = None
             self.log.error("'%s:' URLs are not supported/enabled", scheme)
 
-        if cls and cls.scheme == "http":
+        if cls and cls.scheme in ("http", "aria2c"):
             self.downloaders["http"] = self.downloaders["https"] = instance
         else:
             self.downloaders[scheme] = instance

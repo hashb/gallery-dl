@@ -8,13 +8,10 @@
 
 """Downloader modules"""
 
-import importlib
-import logging
-import subprocess
-
+import shutil
+from .. import config
 
 modules = [
-    "aria2c",  # Make aria2c first in the list
     "http",
     "text",
     "ytdl",
@@ -29,18 +26,13 @@ def find(scheme):
         pass
 
     cls = None
-    # Try aria2c first if available
-    try:
-        module = importlib.import_module(".aria2c", __package__)
-        cls = module.__downloader__
-        _cache["http"] = _cache["https"] = cls  # Register aria2c for http(s)
-        return cls
-    except (ImportError, AttributeError, subprocess.SubprocessError):
-        _log.debug("aria2c not available, falling back to default downloaders")
-
     if scheme == "https":
         scheme = "http"
-    if scheme in modules:  # prevent unwanted imports
+
+    if scheme == "http" and _aria2c_available():
+        from . import aria2c
+        cls = aria2c.__downloader__
+    elif scheme in modules:  # prevent unwanted imports
         try:
             module = __import__(scheme, globals(), None, None, 1)
         except ImportError:
@@ -55,8 +47,15 @@ def find(scheme):
     return cls
 
 
+def _aria2c_available():
+    """Return True if aria2c is enabled and its executable can be found"""
+    if not config.get(("downloader", "aria2c"), "enabled", True):
+        return False
+    path = config.get(("downloader", "aria2c"), "path", "aria2c")
+    return shutil.which(path) is not None
+
+
 # --------------------------------------------------------------------
 # internals
 
 _cache = {}
-_log = logging.getLogger("downloader")
