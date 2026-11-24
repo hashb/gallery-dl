@@ -23,6 +23,7 @@ import http.server
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gallery_dl import downloader, extractor, output, config, path  # noqa E402
 from gallery_dl.downloader.http import MIME_TYPES, SIGNATURE_CHECKS # noqa E402
+from gallery_dl.downloader.http import HttpDownloader  # noqa E402
 
 
 class MockDownloaderModule(Mock):
@@ -56,9 +57,15 @@ class TestDownloaderModule(unittest.TestCase):
 
     def setUp(self):
         downloader._cache.clear()
+        # test built-in downloaders independent of an aria2c installation
+        self._aria2c = patch.object(
+            downloader, "_aria2c_available", return_value=False)
+        self._aria2c.start()
 
     def tearDown(self):
+        self._aria2c.stop()
         downloader._cache.clear()
+        config.clear()
 
     def test_find(self):
         cls = downloader.find("http")
@@ -81,6 +88,30 @@ class TestDownloaderModule(unittest.TestCase):
         self.assertEqual(downloader.find("foo"), None)
         self.assertEqual(downloader.find(1234) , None)
         self.assertEqual(downloader.find(None) , None)
+
+    def test_find_aria2c(self):
+        self._aria2c.stop()
+        with patch("shutil.which", return_value="/usr/bin/aria2c"):
+            cls = downloader.find("http")
+            self.assertEqual(cls.__name__, "Aria2cDownloader")
+            self.assertIs(downloader.find("https"), cls)
+            # other schemes are not handled by aria2c
+            self.assertEqual(downloader.find("text").__name__,
+                             "TextDownloader")
+            self.assertEqual(downloader.find("ytdl").__name__,
+                             "YoutubeDLDownloader")
+
+            downloader._cache.clear()
+            config.set(("downloader", "aria2c"), "enabled", False)
+            self.assertEqual(downloader.find("http").__name__,
+                             "HttpDownloader")
+
+        downloader._cache.clear()
+        config.clear()
+        with patch("shutil.which", return_value=None):
+            self.assertEqual(downloader.find("http").__name__,
+                             "HttpDownloader")
+        self._aria2c.start()
 
     @patch("builtins.__import__")
     def test_cache(self, import_module):
@@ -120,7 +151,7 @@ class TestDownloaderConfig(unittest.TestCase):
     def test_default_http(self):
         job = FakeJob()
         extr = job.extractor
-        dl = downloader.find("http")(job)
+        dl = HttpDownloader(job)
 
         self.assertEqual(dl.adjust_extension, True)
         self.assertEqual(dl.chunk_size, 32768)
@@ -156,7 +187,7 @@ class TestDownloaderConfig(unittest.TestCase):
             ("extractor", "generic", "example.org", "http"), "headers", {})
 
         job = FakeJob()
-        dl = downloader.find("http")(job)
+        dl = HttpDownloader(job)
 
         self.assertEqual(dl.headers, {"foo": "bar"})
         self.assertEqual(dl.minsize, 10240)
@@ -237,7 +268,7 @@ class TestHTTPDownloader(TestDownloaderBase):
     @classmethod
     def setUpClass(cls):
         TestDownloaderBase.setUpClass()
-        cls.downloader = downloader.find("http")(cls.job)
+        cls.downloader = HttpDownloader(cls.job)
 
         host = "127.0.0.1"
         port = 0  # select random not-in-use port

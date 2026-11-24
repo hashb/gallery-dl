@@ -8,6 +8,9 @@
 
 """Downloader modules"""
 
+import shutil
+from .. import config
+
 modules = [
     "http",
     "text",
@@ -25,7 +28,11 @@ def find(scheme):
     cls = None
     if scheme == "https":
         scheme = "http"
-    if scheme in modules:  # prevent unwanted imports
+
+    if scheme == "http" and _aria2c_available():
+        from . import aria2c
+        cls = aria2c.__downloader__
+    elif scheme in modules:  # prevent unwanted imports
         try:
             module = __import__(scheme, globals(), None, None, 1)
         except ImportError:
@@ -38,6 +45,14 @@ def find(scheme):
     else:
         _cache[scheme] = cls
     return cls
+
+
+def _aria2c_available():
+    """Return True if aria2c is enabled and its executable can be found"""
+    if not config.get(("downloader", "aria2c"), "enabled", True):
+        return False
+    path = config.get(("downloader", "aria2c"), "path", "aria2c")
+    return shutil.which(path) is not None
 
 
 # --------------------------------------------------------------------
